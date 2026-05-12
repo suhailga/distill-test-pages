@@ -7,6 +7,7 @@
     html, body { margin: 0; height: 100%; font-family: sans-serif; }
     body { display: flex; flex-direction: column; }
     header { padding: 12px 16px; background: #222; color: #fff; }
+    header code { background: #444; padding: 1px 4px; border-radius: 2px; }
     #scroller {
       flex: 1;
       overflow: auto;
@@ -21,33 +22,50 @@
     #hud {
       position: fixed; top: 8px; right: 8px; z-index: 9999;
       background: #ff0; padding: 8px 10px; font: 13px monospace;
-      border: 1px solid #000; pointer-events: none;
+      border: 1px solid #000; pointer-events: none; white-space: pre;
     }
+    input { font: 14px sans-serif; padding: 6px 8px; margin: 8px 0; width: 320px; }
   </style>
 </head>
 <body>
   <header>
-    Wheel-scroll anywhere in this box. <code>scrollTop</code> is forced to a fractional value on every wheel tick,
-    which makes the v2 macro recorder's <code>scroll(left, top)</code> step record a float and fail the
-    <code>int</code> arg check.
+    The <code>scrollTop</code> / <code>scrollLeft</code> getters on every element are forced to return a fractional value.
+    Scroll once with the wheel or scrollbar, and bbx-client will read a <strong>float</strong> instead of an int —
+    triggering <code>scroll(): expected int, got float</code> in the v2 macro recorder.
+    Then try typing in the input to reproduce the "can't type" symptom.
   </header>
   <div id="scroller">
     <div id="content">
-      <!-- visual rulers so scroll progress is obvious -->
-      <script>
-        // injected by inline script below
-      </script>
+      <input type="text" placeholder="type here AFTER scrolling to repro the wedged-cursor symptom">
+      <p>Scroll the gradient below. Each wheel tick fires a `scroll` event on this div; bbx reads scrollTop, which is forced fractional.</p>
     </div>
   </div>
   <div id="hud">scrollTop = 0 (int)</div>
 
   <script>
-    const scroller = document.getElementById('scroller');
-    const content  = document.getElementById('content');
-    const hud      = document.getElementById('hud');
+    // ---- 1. Force any JS read of scrollTop / scrollLeft to be fractional ----
+    // We do this on Element.prototype so it covers every scroller — including
+    // document.scrollingElement, which is what fires the scroll event when
+    // the user wheels over the bbx iframe's root.
+    function patchScrollGetter(name, offset) {
+      const desc = Object.getOwnPropertyDescriptor(Element.prototype, name);
+      if (!desc || !desc.get) return;
+      Object.defineProperty(Element.prototype, name, {
+        configurable: true,
+        get() {
+          const v = desc.get.call(this);
+          // keep 0 exact so layout heuristics that check `scrollTop === 0` still work
+          return v === 0 ? 0 : v + offset;
+        },
+        set(v) { desc.set.call(this, v); }
+      });
+    }
+    patchScrollGetter('scrollTop',  0.37);
+    patchScrollGetter('scrollLeft', 0.0);  // leave left alone — only top needs to be float
 
-    // paint horizontal rulers every 200px so scrolling is visible
-    for (let y = 0; y < 6000; y += 200) {
+    // ---- 2. Visual rulers so scrolling is obvious ----
+    const content = document.getElementById('content');
+    for (let y = 200; y < 6000; y += 200) {
       const r = document.createElement('div');
       r.className = 'ruler';
       r.style.top = y + 'px';
@@ -55,26 +73,19 @@
       content.appendChild(r);
     }
 
-    // Force a fractional target so scrollTop is a float on every step.
-    // 0.37 is chosen so the accumulator never lands on an integer.
-    let target = 0.37;
-
-    scroller.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      target += e.deltaY;            // integer delta...
-      // ...but `target` retains its 0.37 fractional offset forever.
-      const max = scroller.scrollHeight - scroller.clientHeight;
-      if (target < 0.37) target = 0.37;
-      if (target > max)   target = max - 0.37;
-      scroller.scrollTo({ top: target, left: 0, behavior: 'instant' });
-    }, { passive: false });
-
+    // ---- 3. HUD that mirrors what bbx-client will read ----
+    const scroller = document.getElementById('scroller');
+    const hud = document.getElementById('hud');
     function refreshHud() {
       const t = scroller.scrollTop;
-      hud.textContent = 'scrollTop = ' + t + ' (' + (Number.isInteger(t) ? 'int' : 'FLOAT') + ')';
+      hud.textContent =
+        'scroller.scrollTop = ' + t + '\n' +
+        'documentElement.scrollTop = ' + document.documentElement.scrollTop + '\n' +
+        (Number.isInteger(t) ? '(int — should not happen)' : '(FLOAT — repro armed)');
       hud.style.background = Number.isInteger(t) ? '#cfc' : '#ff0';
     }
     scroller.addEventListener('scroll', refreshHud);
+    document.addEventListener('scroll', refreshHud, true);
     refreshHud();
   </script>
 </body>
