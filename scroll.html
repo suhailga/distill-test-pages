@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Fractional scrollTop repro</title>
+  <style>
+    html, body { margin: 0; height: 100%; font-family: sans-serif; }
+    body { display: flex; flex-direction: column; }
+    header { padding: 12px 16px; background: #222; color: #fff; }
+    #scroller {
+      flex: 1;
+      overflow: auto;
+      background: linear-gradient(180deg, #fee, #aef);
+      position: relative;
+    }
+    #content { height: 6000px; padding: 16px; }
+    .ruler {
+      position: absolute; left: 0; right: 0; border-top: 1px dashed #888;
+      font: 12px monospace; color: #444; padding-left: 6px;
+    }
+    #hud {
+      position: fixed; top: 8px; right: 8px; z-index: 9999;
+      background: #ff0; padding: 8px 10px; font: 13px monospace;
+      border: 1px solid #000; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    Wheel-scroll anywhere in this box. <code>scrollTop</code> is forced to a fractional value on every wheel tick,
+    which makes the v2 macro recorder's <code>scroll(left, top)</code> step record a float and fail the
+    <code>int</code> arg check.
+  </header>
+  <div id="scroller">
+    <div id="content">
+      <!-- visual rulers so scroll progress is obvious -->
+      <script>
+        // injected by inline script below
+      </script>
+    </div>
+  </div>
+  <div id="hud">scrollTop = 0 (int)</div>
+
+  <script>
+    const scroller = document.getElementById('scroller');
+    const content  = document.getElementById('content');
+    const hud      = document.getElementById('hud');
+
+    // paint horizontal rulers every 200px so scrolling is visible
+    for (let y = 0; y < 6000; y += 200) {
+      const r = document.createElement('div');
+      r.className = 'ruler';
+      r.style.top = y + 'px';
+      r.textContent = 'y = ' + y;
+      content.appendChild(r);
+    }
+
+    // Force a fractional target so scrollTop is a float on every step.
+    // 0.37 is chosen so the accumulator never lands on an integer.
+    let target = 0.37;
+
+    scroller.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      target += e.deltaY;            // integer delta...
+      // ...but `target` retains its 0.37 fractional offset forever.
+      const max = scroller.scrollHeight - scroller.clientHeight;
+      if (target < 0.37) target = 0.37;
+      if (target > max)   target = max - 0.37;
+      scroller.scrollTo({ top: target, left: 0, behavior: 'instant' });
+    }, { passive: false });
+
+    function refreshHud() {
+      const t = scroller.scrollTop;
+      hud.textContent = 'scrollTop = ' + t + ' (' + (Number.isInteger(t) ? 'int' : 'FLOAT') + ')';
+      hud.style.background = Number.isInteger(t) ? '#cfc' : '#ff0';
+    }
+    scroller.addEventListener('scroll', refreshHud);
+    refreshHud();
+  </script>
+</body>
+</html>
+
