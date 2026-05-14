@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Akamai-style reload simulator</title>
+</head>
+<body>
+<div id="phase"></div>
+<div id="content"></div>
+<p><a id="reset" href="?reset=1">reset</a></p>
+
+<script>
+  // Mimics what Akamai Bot Manager does on Tesla's inventory pages:
+  //   first visit  -> small "checking your browser" shell + sensor JS
+  //                   which calls location.reload() once the cookie is set.
+  //   second visit -> the real content (large body) is rendered.
+  //
+  // On a static host (GitHub Pages) there is no server to vary the response,
+  // so we fake "first vs. second" with sessionStorage. The visit counter
+  // survives a same-tab reload (which is what location.reload() does) but
+  // clears in a fresh tab/window or via the reset link.
+  //
+  // Why this exercises the validator bug:
+  //   - First load: body has ~25 chars, well below the validator's 800 cutoff,
+  //     so the validator enters its 10-iteration element_text("body") poll.
+  //   - The setTimeout below fires location.reload() while that poll is
+  //     in progress, which destroys the V8 execution context and surfaces
+  //     "Execution context was destroyed, most likely because of a navigation."
+  //   - After the reload, the body holds ~5000 chars; on a retry the
+  //     validator's first poll sees length > 800 and exits cleanly with 0.
+
+  var SOLVED_KEY = 'challenge_solved';
+  var params = new URLSearchParams(location.search);
+  if (params.get('reset') === '1') {
+    sessionStorage.removeItem(SOLVED_KEY);
+    location.replace(location.pathname);
+  }
+
+  var phase = document.getElementById('phase');
+  var content = document.getElementById('content');
+
+  if (sessionStorage.getItem(SOLVED_KEY)) {
+    // Post-challenge state.
+    phase.textContent = 'phase: post-challenge (reload completed)';
+    var filler = 'inventory listing content row '.repeat(200);
+    content.innerHTML = '<h1>Inventory</h1><p>' + filler + '</p>';
+  } else {
+    // Pre-challenge state: small body + scheduled reload.
+    phase.textContent = 'phase: pre-challenge (shell)';
+    content.textContent = 'checking your browser...';
+    sessionStorage.setItem(SOLVED_KEY, '1');
+
+    // The validator polls element_text("body") roughly once per second.
+    // 800ms aims to fire location.reload() between iter 0 (~100ms after
+    // wait_doc resolves) and iter 1 (~1100ms), with the highest chance of
+    // landing inside an in-flight evaluate call. Bump to 1200-1500 if you
+    // want it firmly inside the 2nd poll window instead.
+    setTimeout(function () { location.reload(); }, 800);
+  }
+</script>
+</body>
+</html>
+
