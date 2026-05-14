@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Akamai-style reload simulator</title>
+</head>
+<body>
+<div id="phase"></div>
+<div id="content"></div>
+<p><a id="reset" href="?reset=1">reset</a></p>
+
+<script>
+  // Mimics Akamai Bot Manager's challenge-then-reload pattern on a static host.
+  //
+  //   first visit  -> small "checking" shell. We override document.body.innerText
+  //                   so its getter returns a Promise. Playwright/CDP awaits page
+  //                   return values, so the validator's element_text eval stays
+  //                   pending in the page's V8 context. While it's pending we fire
+  //                   location.reload(), V8 tears down the context, and the
+  //                   pending Promise can never resolve -> CDP rejects the eval
+  //                   with "Execution context was destroyed, most likely because
+  //                   of a navigation."
+  //   second visit -> full content (~5k chars). No override, no reload.
+  //
+  // sessionStorage survives a same-tab reload but clears in a new tab/window
+  // or via the reset link.
+
+  var SOLVED_KEY = 'challenge_solved';
+  var params = new URLSearchParams(location.search);
+  if (params.get('reset') === '1') {
+    sessionStorage.removeItem(SOLVED_KEY);
+    location.replace(location.pathname);
+  }
+
+  var phase = document.getElementById('phase');
+  var content = document.getElementById('content');
+
+  if (sessionStorage.getItem(SOLVED_KEY)) {
+    phase.textContent = 'phase: post-challenge (reload completed)';
+    var filler = 'inventory listing content row '.repeat(200);
+    content.innerHTML = '<h1>Inventory</h1><p>' + filler + '</p>';
+  } else {
+    phase.textContent = 'phase: pre-challenge (shell)';
+    content.textContent = 'checking your browser...';
+    sessionStorage.setItem(SOLVED_KEY, '1');
+
+    // Install the slow-async innerText override AFTER both wait_doc post-step
+    // body_text_length reads have finished:
+    //   - outer macro's wait_doc post-step (~t=10ms)
+    //   - validator's own first wait_doc post-step (~t=100-200ms)
+    // Both reads go through expression-libs/src/v2/common/types.ts:163-178 which
+    // explicitly catches "execution context was destroyed" and swallows it
+    // (body_text_length=0). If the override is in place during either of those
+    // reads, the error is absorbed and the validator never throws -> no UI
+    // "Validation failed" message. We want the slow getter to fire only for
+    // element_text("body") calls inside the validator's polling for loop, where
+    // an error propagates all the way up to the validator hook's catch and is
+    // emitted as status='error'.
+    setTimeout(function () {
+      Object.defineProperty(document.body, 'innerText', {
+        configurable: true,
+        get: function () {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve('checking...'); }, 3000);
+          });
+        }
+      });
+    }, 600);
+
+    // Reload fires during a polling-loop element_text await. Override installed
+    // at 600ms; the validator's first poll lands shortly after (~700-900ms) and
+    // pends for 3s, so reload at 1800ms is firmly inside that pending window.
+    setTimeout(function () { location.reload(); }, 1800);
+  }
+</script>
+</body>
+</html>
+
