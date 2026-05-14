@@ -10,24 +10,20 @@
 <p><a id="reset" href="?reset=1">reset</a></p>
 
 <script>
-  // Mimics what Akamai Bot Manager does on Tesla's inventory pages:
-  //   first visit  -> small "checking your browser" shell + sensor JS
-  //                   which calls location.reload() once the cookie is set.
-  //   second visit -> the real content (large body) is rendered.
+  // Mimics Akamai Bot Manager's challenge-then-reload pattern on a static host.
   //
-  // On a static host (GitHub Pages) there is no server to vary the response,
-  // so we fake "first vs. second" with sessionStorage. The visit counter
-  // survives a same-tab reload (which is what location.reload() does) but
-  // clears in a fresh tab/window or via the reset link.
+  //   first visit  -> small "checking" shell. We override document.body.innerText
+  //                   so its getter returns a Promise. Playwright/CDP awaits page
+  //                   return values, so the validator's element_text eval stays
+  //                   pending in the page's V8 context. While it's pending we fire
+  //                   location.reload(), V8 tears down the context, and the
+  //                   pending Promise can never resolve -> CDP rejects the eval
+  //                   with "Execution context was destroyed, most likely because
+  //                   of a navigation."
+  //   second visit -> full content (~5k chars). No override, no reload.
   //
-  // Why this exercises the validator bug:
-  //   - First load: body has ~25 chars, well below the validator's 800 cutoff,
-  //     so the validator enters its 10-iteration element_text("body") poll.
-  //   - The setTimeout below fires location.reload() while that poll is
-  //     in progress, which destroys the V8 execution context and surfaces
-  //     "Execution context was destroyed, most likely because of a navigation."
-  //   - After the reload, the body holds ~5000 chars; on a retry the
-  //     validator's first poll sees length > 800 and exits cleanly with 0.
+  // sessionStorage survives a same-tab reload but clears in a new tab/window
+  // or via the reset link.
 
   var SOLVED_KEY = 'challenge_solved';
   var params = new URLSearchParams(location.search);
@@ -40,21 +36,34 @@
   var content = document.getElementById('content');
 
   if (sessionStorage.getItem(SOLVED_KEY)) {
-    // Post-challenge state.
     phase.textContent = 'phase: post-challenge (reload completed)';
     var filler = 'inventory listing content row '.repeat(200);
     content.innerHTML = '<h1>Inventory</h1><p>' + filler + '</p>';
   } else {
-    // Pre-challenge state: small body + scheduled reload.
     phase.textContent = 'phase: pre-challenge (shell)';
     content.textContent = 'checking your browser...';
     sessionStorage.setItem(SOLVED_KEY, '1');
 
-    // The validator polls element_text("body") roughly once per second.
-    // 800ms aims to fire location.reload() between iter 0 (~100ms after
-    // wait_doc resolves) and iter 1 (~1100ms), with the highest chance of
-    // landing inside an in-flight evaluate call. Bump to 1200-1500 if you
-    // want it firmly inside the 2nd poll window instead.
+    // Install the slow-async innerText override AFTER the outer wait_doc's own
+    // body_text_length read has finished. body_text_length is computed in
+    // expression-libs/src/v2/common/types.ts:160-178 right after wait_doc
+    // resolves; we want that to read the real innerText quickly so it doesn't
+    // collide with the validator's run. By 200ms the outer wait_doc post-step
+    // is well done and the validator hook is starting its 10-iter poll loop.
+    setTimeout(function () {
+      Object.defineProperty(document.body, 'innerText', {
+        configurable: true,
+        get: function () {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve('checking...'); }, 2000);
+          });
+        }
+      });
+    }, 200);
+
+    // Fire the reload while the validator's element_text Promise is pending.
+    // Slow getter installed at 200ms, validator's first eval lands shortly after,
+    // 800ms reload fires firmly inside the 2s pending window.
     setTimeout(function () { location.reload(); }, 800);
   }
 </script>
