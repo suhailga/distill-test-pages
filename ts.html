@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Current Unix Timestamp</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      overflow-x: scroll;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: #f5f5f5;
+      background: #171717;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .wide-canvas {
+      width: calc(100vw + 1000px);
+      min-height: 100vh;
+      padding: 48px;
+      background: linear-gradient(90deg, #171717 0%, #243b55 50%, #171717 100%);
+    }
+
+    .timestamp-panel {
+      position: sticky;
+      left: 48px;
+      width: max-content;
+      padding: 24px;
+      border: 1px solid #6ee7b7;
+      background: rgb(0 0 0 / 65%);
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font: inherit;
+      color: #6ee7b7;
+    }
+
+    #timestamp {
+      font-size: clamp(2rem, 6vw, 5rem);
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <main class="wide-canvas">
+    <section class="timestamp-panel" aria-live="off">
+      <h1>Current Unix timestamp (milliseconds)</h1>
+      <time id="timestamp"></time>
+    </section>
+  </main>
+
+  <script>
+    const timestamp = document.getElementById('timestamp');
+
+    function updateTimestamp() {
+      const now = Date.now();
+      timestamp.textContent = now;
+      timestamp.dateTime = new Date(now).toISOString();
+      requestAnimationFrame(updateTimestamp);
+    }
+
+    updateTimestamp();
+  </script>
+</body>
+</html>
